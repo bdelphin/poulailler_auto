@@ -13,10 +13,18 @@ int motor_speed_down = 100;
 const int endstop_top_pin = 8;
 const int endstop_bottom_pin = 7;
 
+unsigned long closing_millis = 0;
+int closing_interval = 1200;
+bool error_closing = false;
+
+bool retry_countdown_started = false;
+unsigned long retry_millis = 0;
+long retry_interval = 600000;
+
 // LED : 6
 int diag_led_pin = 6;
 unsigned long led_millis = 0;
-int led_interval = 500;
+int led_interval = 250;
 bool led_blinking = false;
 int led_status = LOW;
 
@@ -24,6 +32,8 @@ int led_status = LOW;
 // DIP2 : 4
 int dip1_pin = 5;
 int dip2_pin = 4;
+
+bool sun_risen = false;
 
 // Photores : A0
 
@@ -43,7 +53,6 @@ int photores_value = 0;
 
 int seuil_photores = 200;
 
-// duree minimum du jour en hiver : 8h = 3600*8*1000 = 28 800 000 ms
 // 1h = 3600*1000 = 3 600 000 ms
 unsigned long door_millis = 0;
 unsigned long door_interval = 3600000;
@@ -78,11 +87,12 @@ void loop()
     //Serial.println(photores_value);  
 
     // si lux_override est à false (on a pas ouvert nanuelement)
-    if(!lux_override and !door_timer_launched)
+    if(!lux_override and !door_timer_launched and !error_closing)
     {
         if(photores_value < seuil_photores and door_opened)
         {
             // il fait noir et la porte est ouverte, on ferme la porte
+            sun_risen = false;
 
             if(digitalRead(dip2_pin) == LOW)
             {
@@ -98,6 +108,7 @@ void loop()
         else if(photores_value >= seuil_photores and !door_opened)
         {
             // il fait jour et la porte est fermee, on ouvre la porte
+            sun_risen = true;
             
             if(digitalRead(dip1_pin) == LOW)
             {
@@ -122,6 +133,125 @@ void loop()
             else
                 open_door();
             door_timer_launched = false;
+            lux_override = false;
+        }
+    }
+
+    if(lux_override and !error_closing)
+    {
+        if(sun_risen and door_opened)
+        {
+            // la porte a ete ouverte quand il faisait jour
+            if(photores_value < seuil_photores)
+            {
+                // il fait noir et la porte est ouverte, on ferme la porte
+                sun_risen = false;
+    
+                if(digitalRead(dip2_pin) == LOW)
+                {
+                    // le DIP2 est à ON, on décalle la fermeture d'une heure
+                    door_millis = millis();
+                    door_timer_launched = true;
+                }
+                else
+                {
+                    close_door();
+                    lux_override = false;
+                }   
+            }
+        }
+        else if(!sun_risen and door_opened)
+        {
+            // la porte a ete ouverte quand il faisait noir
+            // on ne la referme qu'au PROCHAIN coucher de soleil
+            if(photores_value < seuil_photores and sun_risen)
+            {
+                // il fait noir et la porte est ouverte, on ferme la porte
+                sun_risen = false;
+    
+                if(digitalRead(dip2_pin) == LOW)
+                {
+                    // le DIP2 est à ON, on décalle la fermeture d'une heure
+                    door_millis = millis();
+                    door_timer_launched = true;
+                }
+                else
+                {
+                    close_door();
+                    lux_override = false;
+                }   
+            }
+            else if(photores_value >= seuil_photores)
+            {
+                sun_risen = true;
+            }
+        }
+        else if(sun_risen and !door_opened)
+        {
+            // la porte a ete fermee quand il faisait jour
+            // on ne l'ouvre qu'au PROCHAIN lever de soleil
+            if(photores_value >= seuil_photores and !sun_risen)
+            {
+                // il fait jour et la porte est fermee, on ouvre la porte
+                sun_risen = true;
+                
+                if(digitalRead(dip1_pin) == LOW)
+                {
+                    // le DIP1 est à ON, on décalle l'ouverture d'une heure
+                    door_millis = millis();
+                    door_timer_launched = true;
+                }
+                else
+                {
+                    open_door();
+                    lux_override = false;
+                }
+            }
+            else if(photores_value < seuil_photores)
+            {
+                sun_risen = false;
+            }
+        }
+        else if(!sun_risen and !door_opened)
+        {
+            // la porte a ete fermee quand il faisait nuit
+            if(photores_value >= seuil_photores)
+            {
+                // il fait jour et la porte est fermee, on ouvre la porte
+                sun_risen = true;
+                
+                if(digitalRead(dip1_pin) == LOW)
+                {
+                    // le DIP1 est à ON, on décalle l'ouverture d'une heure
+                    door_millis = millis();
+                    door_timer_launched = true;
+                }
+                else
+                {
+                    open_door();
+                    lux_override = false;
+                }
+            }
+        }
+    }
+
+    if(error_closing)
+    {
+        if(retry_countdown_started)
+        {
+            unsigned long currentRetryMillis = millis();
+            if((unsigned long)(currentRetryMillis - retry_millis) >= retry_interval)
+            {
+                // retry countdown ended, lets retry closing door
+                retry_countdown_started = false;
+                error_closing = false;
+                close_door();
+            }
+        }
+        else
+        {
+            retry_millis = millis();
+            retry_countdown_started = true;
         }
     }
 
@@ -131,6 +261,9 @@ void loop()
     if(door_button_status != door_button_last_status)
     {
         door_button_last_status = door_button_status;
+
+        // si le chrono ouverture/fermeture etait lance, on l'arrete
+        door_timer_launched = false;
 
         if(door_button_status == LOW)
         {
@@ -182,6 +315,7 @@ void open_door()
 
 void close_door()
 {
+    closing_millis = millis();
     Serial.println("On ferme la porte ...");
     blink_led(true);
     while(digitalRead(endstop_bottom_pin) != LOW)
@@ -189,6 +323,15 @@ void close_door()
         analogWrite(motor_pin_A, 0);
         analogWrite(motor_pin_B, motor_speed_down);
         blink_led(true);
+
+        unsigned long currentCloseMillis = millis();
+        if((unsigned long)(currentCloseMillis - closing_millis) >= closing_interval)
+        {
+            // la porte a mis plus de 1000ms a se fermer
+            open_door();
+            error_closing = true;
+            return;
+        }
     }
     analogWrite(motor_pin_A, 0);
     analogWrite(motor_pin_B, 0);
