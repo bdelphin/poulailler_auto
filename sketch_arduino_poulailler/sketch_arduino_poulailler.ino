@@ -1,9 +1,15 @@
 // Porte poulailler automatique
 // Baptiste DELPHIN 2021
 
+// OLD VERSION WITH L9110s
 // Motor A&B : 10 & 11
-const int motor_pin_A = 10;
-const int motor_pin_B = 11;
+//const int motor_pin_A = 10;
+//const int motor_pin_B = 11;
+
+// NEW L298N VERSION
+const int motor_enable_pin = 10;
+const int motor_pin_1 = 11;
+const int motor_pin_2 = 12;
 
 int motor_speed_up = 255;
 int motor_speed_down = 100;
@@ -14,7 +20,7 @@ const int endstop_top_pin = 8;
 const int endstop_bottom_pin = 7;
 
 unsigned long closing_millis = 0;
-int closing_interval = 1200;
+int closing_interval = 2500;
 bool error_closing = false;
 
 bool retry_countdown_started = false;
@@ -69,8 +75,9 @@ void setup()
     Serial.begin(9600);
     Serial.println("Poulailler Automatique Arduino");
 
-    pinMode(motor_pin_A, OUTPUT);
-    pinMode(motor_pin_B, OUTPUT);
+    pinMode(motor_enable_pin, OUTPUT);
+    pinMode(motor_pin_1, OUTPUT);
+    pinMode(motor_pin_2, OUTPUT);
 
     pinMode(door_button_pin, INPUT_PULLUP);
 
@@ -302,12 +309,17 @@ void open_door()
     blink_led(true);
     while(digitalRead(endstop_top_pin) != LOW)
     {
-        analogWrite(motor_pin_A, motor_speed_up);
-        analogWrite(motor_pin_B, 0);
+        //analogWrite(motor_pin_A, motor_speed_up);
+        //analogWrite(motor_pin_B, 0);
+        digitalWrite(motor_pin_1, HIGH); 
+        digitalWrite(motor_pin_2, LOW);
+        analogWrite(motor_enable_pin, motor_speed_up);
         blink_led(true);
     }
-    analogWrite(motor_pin_A, 0);
-    analogWrite(motor_pin_B, 0);
+    //analogWrite(motor_pin_A, 0);
+    //analogWrite(motor_pin_B, 0);
+    digitalWrite(motor_pin_1, HIGH); 
+    digitalWrite(motor_pin_2, HIGH);
     Serial.println("Porte ouverte.");
     blink_led(false);
     door_opened = true;
@@ -320,8 +332,11 @@ void close_door()
     blink_led(true);
     while(digitalRead(endstop_bottom_pin) != LOW)
     {
-        analogWrite(motor_pin_A, 0);
-        analogWrite(motor_pin_B, motor_speed_down);
+        //analogWrite(motor_pin_A, 0);
+        //analogWrite(motor_pin_B, motor_speed_down);
+        digitalWrite(motor_pin_1, LOW); 
+        digitalWrite(motor_pin_2, HIGH);
+        analogWrite(motor_enable_pin, motor_speed_down);
         blink_led(true);
 
         unsigned long currentCloseMillis = millis();
@@ -330,11 +345,14 @@ void close_door()
             // la porte a mis plus de 1000ms a se fermer
             open_door();
             error_closing = true;
+            digitalWrite(diag_led_pin, HIGH);
             return;
         }
     }
-    analogWrite(motor_pin_A, 0);
-    analogWrite(motor_pin_B, 0);
+    //analogWrite(motor_pin_A, 0);
+    //analogWrite(motor_pin_B, 0);
+    digitalWrite(motor_pin_1, HIGH); 
+    digitalWrite(motor_pin_2, HIGH);
     Serial.println("Porte fermee.");
     blink_led(false);
     door_opened = false;
